@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TV Voice">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#17132b">
+<link rel="apple-touch-icon" href="icon.png">
+<title>TV Voice</title>
+<style>
+:root{--bg:#17132b;--surface:#251f45;--line:#3a3366;--text:#f3efff;--dim:#a79fcf;--hot:#ff4f7b;--ok:#6be3b5}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:17px/1.4 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,sans-serif}
+body{min-height:100vh;padding:calc(env(safe-area-inset-top,0px) + 14px) 18px calc(env(safe-area-inset-bottom,0px) + 18px);display:flex;flex-direction:column;gap:16px;max-width:520px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:0;font-weight:700}
+#chip{border:1px solid var(--line);background:var(--surface);color:var(--dim);border-radius:99px;padding:7px 13px;font:inherit;font-size:14px}
+#chip.on{color:var(--ok);border-color:var(--ok)}
+textarea{width:100%;min-height:128px;resize:none;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:18px;padding:16px;font:inherit;font-size:26px;line-height:1.25}
+textarea:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--text);outline-offset:2px}
+#mic{align-self:center;width:128px;height:128px;border-radius:50%;border:0;background:var(--hot);color:var(--bg);font:inherit;font-weight:700;font-size:18px;margin:6px 0}
+#mic.live{animation:ring 1.3s infinite}
+@keyframes ring{0%{box-shadow:0 0 0 0 rgba(255,79,123,.6)}100%{box-shadow:0 0 0 38px rgba(255,79,123,0)}}
+@media (prefers-reduced-motion:reduce){#mic.live{animation:none;box-shadow:0 0 0 12px rgba(255,79,123,.35)}}
+.row{display:flex;gap:10px}
+.row button{flex:1}
+button{font:inherit;font-size:17px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--text);padding:14px 10px}
+button.main{background:var(--text);color:var(--bg);border-color:var(--text);font-weight:700}
+button:active{transform:scale(.97)}
+label.chk{display:flex;gap:10px;align-items:center;color:var(--dim);font-size:15px}
+#pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+#pad button{padding:16px 0;font-size:20px}
+#msg{min-height:1.4em;color:var(--dim);font-size:14px;margin:0}
+details{border-top:1px solid var(--line);padding-top:12px;color:var(--dim);font-size:15px}
+summary{color:var(--text)}
+details input,details select{width:100%;margin:6px 0 12px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit}
+details ol{padding-left:20px;margin:8px 0}
+</style>
+</head>
+<body>
+<header><h1>TV Voice</h1><button id="chip" type="button">Not connected</button></header>
+<textarea id="t" placeholder="Tap the mic and say your search" autocapitalize="off" spellcheck="false"></textarea>
+<button id="mic" type="button">Speak</button>
+<div class="row"><button class="main" id="send" type="button">Send to TV</button><button id="clear" type="button">Clear</button></div>
+<label class="chk"><input type="checkbox" id="auto" checked> Send when I stop talking</label>
+<div id="pad">
+<button data-k="KEY_RETURN">Back</button><button data-k="KEY_UP">↑</button><button data-k="KEY_HOME">Home</button>
+<button data-k="KEY_LEFT">←</button><button data-k="KEY_ENTER">OK</button><button data-k="KEY_RIGHT">→</button>
+<span></span><button data-k="KEY_DOWN">↓</button><span></span>
+</div>
+<p id="msg" role="status"></p>
+<details id="setup">
+<summary>TV setup</summary>
+<label>TV IP address<input id="ip" inputmode="decimal" placeholder="192.168.1.50" autocomplete="off"></label>
+<label>Speech language<select id="lang"><option value="en-US">English (US)</option><option value="en-IN">English (India)</option><option value="en-GB">English (UK)</option><option value="hi-IN">Hindi</option><option value="bn-IN">Bengali</option></select></label>
+<ol>
+<li>Find the IP in TV Settings → Network → Network status.</li>
+<li>In Safari, open <b>https://TV-IP:8002</b> once and accept the certificate warning.</li>
+<li>Come back, tap the status chip, and choose Allow on the TV.</li>
+</ol>
+</details>
+<script>
+const $=id=>document.getElementById(id);
+const store={get:k=>{try{return localStorage.getItem(k)||""}catch(e){return ""}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+const msg=s=>$("msg").textContent=s;
+$("ip").value=store.get("ip");
+const nl=navigator.language||"en-US";
+$("lang").value=[...$("lang").options].some(o=>o.value===nl)?nl:(store.get("lang")||"en-US");
+if(store.get("lang"))$("lang").value=store.get("lang");
+if(!$("ip").value)$("setup").open=true;
+$("ip").onchange=()=>store.set("ip",$("ip").value.trim());
+$("lang").onchange=()=>store.set("lang",$("lang").value);
+
+let ws=null,ready=false,queue=[];
+function connect(){
+  const ip=$("ip").value.trim();
+  if(!ip){$("setup").open=true;msg("Enter your TV’s IP address first.");return}
+  store.set("ip",ip);
+  if(ws&&ws.readyState<2)return;
+  msg("Connecting… check the TV for an Allow prompt.");
+  const name=btoa("TV Voice"),tok=store.get("token");
+  try{ws=new WebSocket(`wss://${ip}:8002/api/v2/channels/samsung.remote.control?name=${name}`+(tok?`&token=${tok}`:""))}catch(e){fail();return}
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch(x){return}
+    if(m.event==="ms.channel.connect"){
+      ready=true;if(m.data&&m.data.token)store.set("token",m.data.token);
+      $("chip").textContent="TV connected";$("chip").className="on";msg("");
+      queue.forEach(f=>f());queue=[];
+    }
+  };
+  ws.onclose=()=>{ready=false;$("chip").textContent="Not connected";$("chip").className=""};
+  ws.onerror=fail;
+}
+function fail(){msg("Couldn’t reach the TV. Check the IP, make sure the TV is on, and open https://"+$("ip").value.trim()+":8002 in Safari once to accept its certificate.")}
+function tx(params){const go=()=>ws.send(JSON.stringify({method:"ms.remote.control",params}));if(ready)go();else{queue.push(go);connect()}}
+function key(k){tx({Cmd:"Click",DataOfCmd:k,Option:"false",TypeOfRemote:"SendRemoteKey"})}
+function sendText(){
+  const v=$("t").value.trim();if(!v)return;
+  tx({Cmd:btoa(unescape(encodeURIComponent(v))),DataOfCmd:"base64",TypeOfRemote:"SendInputString"});
+  tx({Cmd:"",DataOfCmd:"base64",TypeOfRemote:"SendInputEnd"});
+  msg("Sent. Open the search box on the TV first if nothing appears.");
+}
+$("chip").onclick=connect;
+$("send").onclick=sendText;
+$("clear").onclick=()=>{$("t").value="";$("t").focus()};
+document.querySelectorAll("#pad button").forEach(b=>b.onclick=()=>key(b.dataset.k));
+
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null,listening=false;
+function stopUI(){listening=false;$("mic").classList.remove("live");$("mic").textContent="Speak"}
+$("mic").onclick=()=>{
+  if(!SR){msg("Speech recognition isn’t available here. Tap the text box and use the microphone key on the iPhone keyboard.");$("t").focus();return}
+  if(listening){rec.stop();return}
+  rec=new SR();rec.lang=$("lang").value;rec.interimResults=true;rec.continuous=false;
+  rec.onresult=e=>{$("t").value=[...e.results].map(r=>r[0].transcript).join(" ").trim()};
+  rec.onerror=e=>{stopUI();msg(e.error==="not-allowed"?"Microphone access is blocked. Allow it in iPhone Settings → Safari → Microphone, or use the keyboard mic.":"Didn’t catch that. Try again.")};
+  rec.onend=()=>{const was=listening;stopUI();if(was&&$("auto").checked)sendText()};
+  listening=true;$("mic").classList.add("live");$("mic").textContent="Listening";msg("");
+  try{rec.start()}catch(e){stopUI()}
+};
+</script>
+</body>
+</html>
